@@ -2957,11 +2957,11 @@ function toRecords(text) {
   const h = t[0].map(x => x.trim()), ix = n => h.indexOf(n);
   if (ix('STT No') < 0 || ix('Week of Year') < 0) return [];
   const I = { stt: ix('STT No'), week: ix('Week of Year'), vendor: ix('Vendor Name'), origin: ix('Origin'), dest: ix('Dest'), last: ix('Last Status Genesis'),
-    sla: ix('BKD - POD Process'), booked: ix('STT Booked At'), pod: ix('POD'), hour: ix('BKD-POD Hour'), mm: ix('MM Hour'), lm: ix('LM Hour'), wt: ix('Chargeable Weight'), fmn: ix('FM Hour Non Jabo'), fmj: ix('FM Hour Jabo') };
+    sla: ix('BKD - POD Process'), booked: ix('STT Booked At'), pod: ix('POD'), hour: ix('BKD-POD Hour'), mm: ix('MM Hour'), lm: ix('LM Hour'), wt: ix('Chargeable Weight'), fmn: ix('FM Hour Non Jabo'), fmj: ix('FM Hour Jabo'), flag: ix('flag route'), ocity: ix('origin city'), dcity: ix('dest city') };
   const g = (r, k) => I[k] < 0 ? '' : (r[I[k]] || '').trim();
   return t.slice(1).filter(r => g(r, 'stt')).map(r => ({
     stt: g(r, 'stt'), week: g(r, 'week'), vendor: g(r, 'vendor') || '-', origin: g(r, 'origin'), dest: g(r, 'dest'), last: g(r, 'last'), sla: g(r, 'sla'),
-    booked: g(r, 'booked'), pod: g(r, 'pod'), hour: num(g(r, 'hour')), mm: num(g(r, 'mm')), lm: num(g(r, 'lm')), wt: num(g(r, 'wt')), fm: (num(g(r, 'fmn')) ?? num(g(r, 'fmj')))
+    booked: g(r, 'booked'), pod: g(r, 'pod'), hour: num(g(r, 'hour')), mm: num(g(r, 'mm')), lm: num(g(r, 'lm')), wt: num(g(r, 'wt')), fm: (num(g(r, 'fmn')) ?? num(g(r, 'fmj'))), flag: g(r, 'flag').toLowerCase(), ocity: g(r, 'ocity'), dcity: g(r, 'dcity')
   }));
 }
 
@@ -3083,7 +3083,10 @@ const LANES = [
 ];
 let perfRange = 4, perfSel = null;
 
-const laneOf = d => ID_DEST.has(d) ? 'id' : MY_DEST.has(d) ? 'dom' : 'intl';
+const FLAG_LANE = { 'my-id': 'id', 'my-my': 'dom', 'my-inter': 'intl' };
+const destLane = d => ID_DEST.has(d) ? 'id' : MY_DEST.has(d) ? 'dom' : 'intl';
+// Lane mengikuti kolom "flag route" di raw data; kalau kosong (data lama) baru pakai kode Dest
+const laneOf = r => (r && typeof r === 'object') ? (FLAG_LANE[String(r.flag || '').trim().toLowerCase()] || destLane(r.dest)) : destLane(r);
 const tone = v => v === null || v === undefined ? '' : v >= OTP_GOOD ? 'ok' : v >= OTP_WARN ? 'warn' : 'bad';
 const NA = '<span class="na">n-a</span>';
 
@@ -3154,7 +3157,7 @@ function renderBreakdown(root, key, opt) {
     const vend = [...groupBy(rs, 'vendor').entries()].map(([v, r]) => ({ v, r, ...rank(r) })).sort(bySize);
     const V = opt && opt.v !== undefined ? opt.v : 5, top = vend.slice(0, V), rest = opt && opt.cap ? [] : vend.slice(V);
     const cap = opt && opt.cap && vend.length ? 'Vendor: ' + vend.slice(0, 3).map(x => x.v).join(' · ') : '';
-    let h = row(name, rs, 'bk-o', isO ? '' : (LT[laneOf(name)] || ''), maxV, cap);
+    let h = row(name, rs, 'bk-o', isO ? '' : (LT[laneOf(rs[0] || name)] || ''), maxV, cap);
     top.forEach(x => { h += row(x.v, x.r, 'bk-v', '', maxV); });
     if (rest.length) h += row(`Vendor lain (${rest.length})`, rest.flatMap(x => x.r), 'bk-v bk-rest', '', maxV);
     return h;
@@ -3231,7 +3234,7 @@ function perfParts(weeks, sel) {
   const memo = {};
   const calc = w => memo[w] || (memo[w] = (() => {
     const g = { id: [], dom: [], intl: [] };
-    (byWeek.get(w) || []).forEach(r => g[laneOf(r.dest)].push(r));
+    (byWeek.get(w) || []).forEach(r => g[laneOf(r)].push(r));
     const o = { all: agg(byWeek.get(w) || []), rows: g };
     LANES.forEach(L => { o[L.key] = agg(g[L.key]); });
     return o;
@@ -3730,7 +3733,7 @@ const Present = (() => {
     LANES.forEach(L => { data[L.key] = {}; });
     weeks.forEach(w => {
       const g = { id: [], dom: [], intl: [] };
-      byWeek.get(w).forEach(r => g[laneOf(r.dest)].push(r));
+      byWeek.get(w).forEach(r => g[laneOf(r)].push(r));
       LANES.forEach(L => { data[L.key][w] = agg(g[L.key]); });
     });
     return { weeks, sel, prev: weeks[weeks.length - 2], data, rows: byWeek.get(sel) };

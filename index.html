@@ -4027,13 +4027,7 @@ const Present = (() => {
   }
   function close() { setMode(true); }
 
-  /* ---------- Download PPTX: semua slide jadi objek PowerPoint asli (teks, tabel, bentuk, gambar) ---------- */
-  async function exportPptx() {
-    const btn = q('[data-a="pptx"]'), lbl = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan PPT…'; }
-    try {
-      if (!window.PptxGenJS) await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'; s.onload = ok; s.onerror = () => no(new Error('Library PPTX gagal dimuat')); document.head.appendChild(s); });
-      const P = new PptxGenJS(); P.layout = 'LAYOUT_WIDE'; P.title = 'Interpack MY ' + (ctx ? ctx.sel : '');
+  const makeTools = P => {
       const F = 'Arial', hex = n => Math.round(n).toString(16).padStart(2, '0');
       const rgb = c => { const m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return null; const p = m[1].split(',').map(parseFloat), a = p.length > 3 ? p[3] : 1; return a === 0 ? null : { hex: (hex(p[0]) + hex(p[1]) + hex(p[2])).toUpperCase(), tr: Math.round((1 - a) * 100) }; };
       const grad = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'), f = g.createLinearGradient(0, 0, w, h); f.addColorStop(0, '#f4511e'); f.addColorStop(1, '#e60012'); g.fillStyle = f; g.fillRect(0, 0, w, h); return c.toDataURL('image/png'); };
@@ -4078,14 +4072,14 @@ const Present = (() => {
         }
       };
 
-      const paint = (sec, sl, nextSlide) => {
+      const paint = (sec, sl, nextSlide, native) => {
         const o = sec.getBoundingClientRect(), rel = r => ({ x: (r.left - o.left) / sc / 96, y: (r.top - o.top) / sc / 96, w: r.width / sc / 96, h: r.height / sc / 96 });
         const walk = n => {
           const cs = getComputedStyle(n);
           if (cs.display === 'none' || cs.visibility === 'hidden' || n.matches('.pz-hd,.pz-ins.empty,script,style')) return;
           const r = rel(n.getBoundingClientRect());
           if (r.y >= 7.5 || r.w <= 0 || r.h <= 0) return;
-          if (n.tagName === 'TABLE') return table(n, sl, o, rel, nextSlide);
+          if (n.tagName === 'TABLE' && native !== false) return table(n, sl, o, rel, nextSlide);
           if (n.tagName === 'IMG') { if (n.src) sl.addImage({ data: n.src.startsWith('data:') ? n.src : undefined, path: n.src.startsWith('data:') ? undefined : n.src, ...r }); return; }
           if (n.tagName === 'svg' || n.tagName === 'SVG') return;
           const bg = rgb(cs.backgroundColor), bw = parseFloat(cs.borderTopWidth) > 0 && parseFloat(cs.borderLeftWidth) > 0 ? rgb(cs.borderTopColor) : null;
@@ -4104,6 +4098,35 @@ const Present = (() => {
         [...sec.children].forEach(walk);
       };
 
+      return { paint, mkSlide, rgb };
+  };
+
+  /* ---------- Jadikan slide otomatis bisa diedit (tiap bagian jadi elemen: geser, hapus, ubah teks) ---------- */
+  function unlockSlides(list) {
+    const T = makeTools({ ShapeType: { rect: 'rect', roundRect: 'roundRect', ellipse: 'ellipse' } }), secs = stage.querySelectorAll('.pz-slide');
+    let n = 0;
+    list.forEach(i => {
+      const d = deck.slides[i]; if (!d || d.auto === null) return;
+      const out = [], B = o => ({ x: o.x * 96, y: o.y * 96, w: o.w * 96, h: o.h * 96 });
+      T.paint(secs[i], {
+        addShape: (t, o) => { if (!o.fill || !o.fill.color) return; const h = o.fill.color, a = 1 - (o.fill.transparency || 0) / 100; out.push(mkEl('rect', { ...B(o), bg: a < 1 ? `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4), 16)},${a})` : '#' + h })); },
+        addText: (t, o) => out.push(mkEl('text', { ...B(o), text: t, fs: Math.round(o.fontSize / 0.75 * 10) / 10, color: '#' + o.color, b: o.bold ? 1 : 0, al: o.align })),
+        addImage: o => { const src = o.data || o.path; if (src) out.push(mkEl('img', { ...B(o), src })); }
+      }, null, false);
+      d.els = [...out, ...d.els]; d.auto = null; delete d.ins; n++;
+    });
+    if (n) { save(); render(); show(idx); }
+    note(n ? n + ' slide sekarang bisa diedit penuh (tidak ikut update otomatis lagi)' : 'Slide ini sudah bisa diedit');
+  }
+
+  /* ---------- Download PPTX: semua slide jadi objek PowerPoint asli (teks, tabel, bentuk, gambar) ---------- */
+  async function exportPptx() {
+    const btn = q('[data-a="pptx"]'), lbl = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Menyiapkan PPT…'; }
+    try {
+      if (!window.PptxGenJS) await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'; s.onload = ok; s.onerror = () => no(new Error('Library PPTX gagal dimuat')); document.head.appendChild(s); });
+      const P = new PptxGenJS(); P.layout = 'LAYOUT_WIDE'; P.title = 'Interpack MY ' + (ctx ? ctx.sel : '');
+      const { paint, mkSlide } = makeTools(P);
       const secs = stage.querySelectorAll('.pz-slide');
       deck.slides.forEach((d, i) => {
         const sec = secs[i]; let sl = mkSlide(sec, d);
@@ -4155,6 +4178,8 @@ const Present = (() => {
     bold: () => { const e = selId && curEl(); if (e) setProp('b', e.b ? 0 : 1); syncTools(); },
     delel: () => { if (!selId) return; const s = deck.slides[idx]; s.els = s.els.filter(e => e.id !== selId); selId = null; redraw(); syncTools(); },
     pptx: () => exportPptx(),
+    unlock: () => unlockSlides([idx]),
+    unlockall: () => unlockSlides(deck.slides.map((x, i) => i)),
     exp: () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(deck)], { type: 'application/json' })); a.download = 'interpack-deck.json'; a.click(); },
     imp: () => q('.pz-imp').click(),
     reset: () => { if (confirm('Kembalikan deck ke susunan awal? Semua editan hilang.')) { deck = defaultDeck(); save(); render(); show(0); } }
@@ -4171,7 +4196,7 @@ const Present = (() => {
         <button type="button" data-a="bold" title="Tebal"><b>B</b></button><button type="button" data-a="delel">Hapus elemen</button><span class="pz-sep"></span>
         <button type="button" class="pz-tbtn" data-a="rowp">+ Baris</button><button type="button" class="pz-tbtn" data-a="rowm">− Baris</button><button type="button" class="pz-tbtn" data-a="colp">+ Kolom</button><button type="button" class="pz-tbtn" data-a="colm">− Kolom</button>
         <span class="pz-grow"></span><span class="pz-st"></span><label>Minggu <select class="pz-wk"></select></label>
-        <button type="button" data-a="pptx" class="pz-go" title="Download semua slide sebagai file PowerPoint (.pptx)">⬇ Download PPT</button><button type="button" data-a="exp">Export</button><button type="button" data-a="imp">Import</button><button type="button" data-a="reset">Reset</button><button type="button" data-a="play" class="pz-go">▶ Slideshow</button></div>
+        <button type="button" data-a="unlock" title="Pecah slide data jadi elemen yang bisa digeser/dihapus/diedit">✎ Edit slide ini</button><button type="button" data-a="unlockall" title="Semua slide jadi bisa diedit penuh">✎ Edit semua</button><button type="button" data-a="pptx" class="pz-go" title="Download semua slide sebagai file PowerPoint (.pptx)">⬇ Download PPT</button><button type="button" data-a="exp">Export</button><button type="button" data-a="imp">Import</button><button type="button" data-a="reset">Reset</button><button type="button" data-a="play" class="pz-go">▶ Slideshow</button></div>
       <div class="pz-rail"></div><div class="pz-stage"></div>
       <div class="pz-notes"><textarea placeholder="Speaker notes untuk slide ini…  ·  Tip: Ctrl+V menempel tabel dari Excel/WPS, gambar, atau teks langsung ke slide"></textarea></div><div class="pz-grid hidden"></div>
       <div class="pz-bar"><button type="button" class="pz-nav" data-a="prev" title="Sebelumnya (←)">‹</button><span class="pz-count"></span><button type="button" class="pz-nav" data-a="next" title="Berikutnya (→ / Spasi)">›</button>
